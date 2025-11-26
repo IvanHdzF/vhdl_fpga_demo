@@ -58,8 +58,8 @@ begin
       if cs_n = '1' then
         rx_bit_cnt <= (others => '0');
       else
-        -- compute next shift value first
-        new_shift := mosi & shift_in(7 downto 1);
+        -- MSB-first, shift left, new bit into LSB
+        new_shift := shift_in(6 downto 0) & mosi;
         shift_in  <= new_shift;
 
         if rx_bit_cnt = "111" then

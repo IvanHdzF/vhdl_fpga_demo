@@ -89,6 +89,13 @@ begin
     variable tx_sampled2 : std_logic_vector(7 downto 0);
     variable error_count : integer := 0;
 
+     -- for multi-byte full-duplex test
+    type t_byte_arr is array (0 to 3) of std_logic_vector(7 downto 0);
+    variable mosi_seq    : t_byte_arr := (x"A1", x"B2", x"C3", x"D4");
+    variable miso_seq    : t_byte_arr := (x"11", x"22", x"33", x"44");
+    variable mosi_captured : t_byte_arr;
+    variable miso_captured : t_byte_arr;
+
   begin
     -- Initial idle
     cs_n    <= '1';
@@ -98,17 +105,17 @@ begin
     wait for 5*C_SCLK_PERIOD;
 
     -------------------------------------------------------------------------
-    -- Test 1: RX only, send 0xA5 from master to slave
+    -- Test 1: RX only, send 0xF0 from master to slave
     -------------------------------------------------------------------------
-    report "Test 1: RX path, sending 0xA5" severity note;
+    report "Test 1: RX path, sending 0xF0" severity note;
     cs_n <= '0';
-    spi_send_byte(x"A5");
+    spi_send_byte(x"F0");
 
     -- Wait for full byte
     wait until rx_valid = '1';
     wait until falling_edge(sclk);  -- settle
 
-    if rx_byte /= x"A5" then
+    if rx_byte /= x"F0" then
       error_count := error_count + 1;
       report "Test 1 FAILED. rx_byte dec=" &
              integer'image(to_integer(unsigned(rx_byte)))
@@ -193,6 +200,65 @@ begin
     else
       report "Test 3 PASSED" severity note;
     end if;
+
+    wait until falling_edge(sclk);
+    wait for C_SCLK_PERIOD;  -- CS high ≥ 1 SCLK
+    wait for C_SCLK_PERIOD;
+
+    -------------------------------------------------------------------------
+    -- Test 4: Multi-byte full-duplex, 3 bytes under one CS
+    -------------------------------------------------------------------------
+    report "Test 4: 3-byte full-duplex under single CS" severity note;
+
+    -- prepare first TX byte, keep tx_valid high so PHY can sample at byte boundaries
+    tx_valid <= '1';
+    tx_byte  <= miso_seq(0);
+
+    -- clear capture buffers
+    for k in 0 to 3 loop
+      mosi_captured(k) := (others => '0');
+      miso_captured(k) := (others => '0');
+    end loop;
+
+    cs_n <= '0';
+    -- 3 bytes, back-to-back, CS held low
+    for j in 0 to 3 loop
+      tx_byte <= miso_seq(j);
+      spi_full_duplex(mosi_seq(j), miso_captured(j));
+      -- Wait for rx_valid and settle
+      wait until rx_valid = '1';
+      --wait until falling_edge(sclk); 
+      mosi_captured(j) := rx_byte;
+    end loop;
+
+    cs_n <= '1';
+    tx_valid <= '0';
+    wait for C_SCLK_PERIOD;  -- CS high ≥ 1 SCLK
+
+    -- Check all three RX bytes
+    for j in 0 to 3 loop
+      if mosi_captured(j) /= mosi_seq(j) then
+        error_count := error_count + 1;
+        report "Test 4 FAILED RX byte " & integer'image(j) &
+               " dec=" & integer'image(to_integer(unsigned(mosi_captured(j))))
+          severity error;
+      end if;
+    end loop;
+
+    -- Check all three TX bytes
+    for j in 0 to 3 loop
+      if miso_captured(j) /= miso_seq(j) then
+        error_count := error_count + 1;
+        report "Test 4 FAILED TX byte " & integer'image(j) &
+               " dec=" & integer'image(to_integer(unsigned(miso_captured(j))))
+          severity error;
+      end if;
+    end loop;
+
+    if error_count = 0 then
+      report "Test 4 PASSED" severity note;
+    end if;
+
 
     -------------------------------------------------------------------------
     -- Summary
