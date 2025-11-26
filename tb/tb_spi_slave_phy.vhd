@@ -62,17 +62,17 @@ begin
   stim : process
     procedure spi_send_byte(constant b : std_logic_vector(7 downto 0)) is
     begin
-      -- Send MSB first, change MOSI on falling edge, sampled on rising edge (mode 0)
+      -- MSB first, change MOSI on falling, sample on rising (mode 0)
       for i in 7 downto 0 loop
-        -- prepare bit before rising edge
         wait until falling_edge(sclk);
         mosi <= b(i);
         wait until rising_edge(sclk);
       end loop;
     end procedure;
-    
-    -- local variable for TX sampling
-  variable tx_sampled : std_logic_vector(7 downto 0);
+
+    -- local variables
+    variable tx_sampled  : std_logic_vector(7 downto 0);
+    variable error_count : integer := 0;
 
   begin
     -- Initial idle
@@ -89,22 +89,25 @@ begin
     cs_n <= '0';
     spi_send_byte(x"A5");
 
-    -- Wait until the DUT signals a full byte has been received
+    -- Wait for full byte
     wait until rx_valid = '1';
-    wait until falling_edge(sclk);
-    assert rx_byte = x"A5"
-      report "RX mismatch in Test 1. Got dec=" &
-            integer'image(to_integer(unsigned(rx_byte)))
-      severity error;
+    wait until falling_edge(sclk);  -- settle
+
+    if rx_byte /= x"A5" then
+      error_count := error_count + 1;
+      report "Test 1 FAILED. rx_byte dec=" &
+             integer'image(to_integer(unsigned(rx_byte)))
+        severity error;
+    else
+      report "Test 1 PASSED" severity note;
+    end if;
 
     wait until rising_edge(sclk);
     cs_n <= '1';
-    wait for C_SCLK_PERIOD;
+    wait for C_SCLK_PERIOD;  -- CS high ≥ 1 SCLK
     wait for C_SCLK_PERIOD;
 
-    -- Clear MOSI line (Test teardown)
     mosi <= '0';
-
 
     -------------------------------------------------------------------------
     -- Test 2: TX path, have slave transmit 0x5A while master clocks
@@ -116,30 +119,40 @@ begin
     tx_sampled := (others => '0');
 
     cs_n <= '0';
-    -- clock one byte; monitor MISO on falling edge (stable zone)
+    -- Slave updates MISO on falling; master samples on rising
     for i in 7 downto 0 loop
       wait until falling_edge(sclk);
       
       wait until rising_edge(sclk);
       tx_sampled(i) := miso;
       report "MISO bit index " & integer'image(i) &
-            " = " & std_logic'image(miso)
+             " = " & std_logic'image(miso)
         severity note;
     end loop;
     cs_n <= '1';
     tx_valid <= '0';
 
-    -- Check that the sampled byte matches 0x5A
-    assert tx_sampled = x"5A"
-      report "TX mismatch in Test 2. Got dec=" &
-            integer'image(to_integer(unsigned(tx_sampled)))
-      severity error;
+    if tx_sampled /= x"5A" then
+      error_count := error_count + 1;
+      report "Test 2 FAILED. tx_sampled dec=" &
+             integer'image(to_integer(unsigned(tx_sampled)))
+        severity error;
+    else
+      report "Test 2 PASSED" severity note;
+    end if;
 
     -------------------------------------------------------------------------
-    -- Finish simulation
+    -- Summary
     -------------------------------------------------------------------------
+    if error_count = 0 then
+      report "All tests PASSED" severity note;
+    else
+      report "TESTBENCH FAILED, error_count=" &
+             integer'image(error_count)
+        severity error;
+    end if;
+
     wait for 5*C_SCLK_PERIOD;
-    report "Simulation finished" severity note;
     wait;
   end process;
 
