@@ -100,6 +100,7 @@ begin
     wait until rising_edge(sclk);
     cs_n <= '1';
     wait for C_SCLK_PERIOD;
+    wait for C_SCLK_PERIOD;
 
     -- Clear MOSI line (Test teardown)
     mosi <= '0';
@@ -118,11 +119,12 @@ begin
     -- clock one byte; monitor MISO on falling edge (stable zone)
     for i in 7 downto 0 loop
       wait until falling_edge(sclk);
+      
+      wait until rising_edge(sclk);
       tx_sampled(i) := miso;
       report "MISO bit index " & integer'image(i) &
             " = " & std_logic'image(miso)
         severity note;
-      wait until rising_edge(sclk);
     end loop;
     cs_n <= '1';
     tx_valid <= '0';
