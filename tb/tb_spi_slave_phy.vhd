@@ -70,8 +70,23 @@ begin
       end loop;
     end procedure;
 
+    -- Full-duplex: send one byte on MOSI, capture one byte from MISO
+    procedure spi_full_duplex(
+      constant mosi_byte : std_logic_vector(7 downto 0);
+      variable miso_byte : out std_logic_vector(7 downto 0)
+    ) is
+    begin
+      for i in 7 downto 0 loop
+        wait until falling_edge(sclk);
+        mosi <= mosi_byte(i);      -- master drives MOSI
+        wait until rising_edge(sclk);
+        miso_byte(i) := miso;      -- master samples MISO
+      end loop;
+    end procedure;
+
     -- local variables
     variable tx_sampled  : std_logic_vector(7 downto 0);
+    variable tx_sampled2 : std_logic_vector(7 downto 0);
     variable error_count : integer := 0;
 
   begin
@@ -131,6 +146,9 @@ begin
     end loop;
     cs_n <= '1';
     tx_valid <= '0';
+    wait until falling_edge(sclk);
+    wait for C_SCLK_PERIOD;  -- CS high ≥ 1 SCLK
+    wait for C_SCLK_PERIOD;
 
     if tx_sampled /= x"5A" then
       error_count := error_count + 1;
@@ -139,6 +157,41 @@ begin
         severity error;
     else
       report "Test 2 PASSED" severity note;
+    end if;
+
+    -------------------------------------------------------------------------
+    -- Test 3: Full-duplex, 1 byte RX + 1 byte TX in same CS
+    -------------------------------------------------------------------------
+    report "Test 3: Full-duplex, RX 0xA5 while TX 0x3C" severity note;
+
+    tx_byte  <= x"3C";
+    tx_valid <= '1';
+    tx_sampled := (others => '0');
+    cs_n <= '0';
+
+    -- send 0xA5 on MOSI, capture MISO simultaneously
+    spi_full_duplex(x"A5", tx_sampled);
+
+    -- Wait for rx_valid and settle
+    wait until rx_valid = '1';
+    wait until falling_edge(sclk);
+
+    -- end of frame
+    cs_n <= '1';
+    tx_valid <= '0';
+
+    if rx_byte /= x"A5" then
+      error_count := error_count + 1;
+      report "Test 3 FAILED RX. rx_byte dec=" &
+             integer'image(to_integer(unsigned(rx_byte)))
+        severity error;
+    elsif tx_sampled /= x"3C" then
+      error_count := error_count + 1;
+      report "Test 3 FAILED TX. tx_sampled dec=" &
+             integer'image(to_integer(unsigned(tx_sampled)))
+        severity error;
+    else
+      report "Test 3 PASSED" severity note;
     end if;
 
     -------------------------------------------------------------------------
