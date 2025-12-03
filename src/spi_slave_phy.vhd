@@ -82,31 +82,32 @@ begin
     if falling_edge(sclk) then
 
       if cs_n = '1' then
+        -- New frame: request a first byte immediately
         tx_bit_cnt <= (others => '0');
-        tx_ready_i <= '0';
+        tx_ready_i <= '1';     -- "hey parser, give me a byte"
         miso_reg   <= '0';
+
       else
-        -- At the start of each byte, request new data
-        if tx_bit_cnt = "000" then
-          tx_ready_i <= '1';
-          if tx_valid = '1' then
-            tx_byte_reg <= tx_byte;
-            tx_ready_i  <= '0';
-          end if;
+        -- Handshake: if we are ready and parser presents a byte, latch it
+        if (tx_ready_i = '1') and (tx_valid = '1') then
+          tx_byte_reg <= tx_byte;  -- capture new byte
+          tx_ready_i  <= '0';      -- got it, not ready again until end of byte
         end if;
 
-        -- Drive MISO = tx_byte_reg(7 - bit_cnt)
-        bit_idx := 7 - to_integer(tx_bit_cnt);
+        -- Drive current bit (always from the already-latched byte)
+        bit_idx  := 7 - to_integer(tx_bit_cnt);
         miso_reg <= tx_byte_reg(bit_idx);
 
-        -- Advance bit counter
+        -- Bit counter and "request next byte" at byte boundary
         if tx_bit_cnt = "111" then
           tx_bit_cnt <= (others => '0');
+          tx_ready_i <= '1';      -- finished this byte, ask for the next
         else
           tx_bit_cnt <= tx_bit_cnt + 1;
         end if;
       end if;
     end if;
   end process;
+
 
 end architecture rtl;
