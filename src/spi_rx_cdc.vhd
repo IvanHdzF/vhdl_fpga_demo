@@ -18,43 +18,40 @@ entity spi_rx_cdc is
 end entity;
 
 architecture rtl of spi_rx_cdc is
-  signal rx_data_sclk    : std_logic_vector(7 downto 0) := (others => '0');
-  signal rx_req_tgl_sclk : std_logic := '0';
-  signal rx_req_sync_sys : std_logic_vector(1 downto 0) := (others => '0');
-  signal par_rx_byte_i   : std_logic_vector(7 downto 0) := (others => '0');
-  signal par_rx_valid_i  : std_logic := '0';
+  -- SYS domain
+  signal v_meta_sys    : std_logic := '0';
+  signal v_sync_sys    : std_logic := '0';
+  signal v_prev_sys    : std_logic := '0';
+
+  signal par_rx_byte_i : std_logic_vector(7 downto 0) := (others => '0');
+  signal par_rx_valid_i: std_logic := '0';
 begin
   par_rx_byte  <= par_rx_byte_i;
   par_rx_valid <= par_rx_valid_i;
 
-  -- SCLK domain: capture byte + toggle
-  process(sclk)
-  begin
-    if rising_edge(sclk) then
-      if phy_rx_valid = '1' then
-        rx_data_sclk   <= phy_rx_byte;
-        rx_req_tgl_sclk <= not rx_req_tgl_sclk;
-      end if;
-    end if;
-  end process;
-
-  -- SYS domain: detect toggle, generate 1-cycle pulse
+  -- SYS domain: 2-FF sync + rising-edge detect on phy_rx_valid
   process(sys_clk, sys_rst_n)
   begin
     if sys_rst_n = '0' then
-      rx_req_sync_sys <= (others => '0');
-      par_rx_valid_i  <= '0';
-      par_rx_byte_i   <= (others => '0');
+      v_meta_sys     <= '0';
+      v_sync_sys     <= '0';
+      v_prev_sys     <= '0';
+      par_rx_valid_i <= '0';
+      par_rx_byte_i  <= (others => '0');
+
     elsif rising_edge(sys_clk) then
       par_rx_valid_i <= '0';
 
-      rx_req_sync_sys(0) <= rx_req_tgl_sclk;
-      rx_req_sync_sys(1) <= rx_req_sync_sys(0);
+      v_prev_sys <= v_sync_sys;        -- previous stable value
+      v_meta_sys <= phy_rx_valid;      -- first sync FF (metastable)
+      v_sync_sys <= v_meta_sys;        -- second sync FF (stable)
 
-      if rx_req_sync_sys(1) /= rx_req_sync_sys(0) then
-        par_rx_byte_i  <= rx_data_sclk;
+      -- rising edge of synced valid
+      if (v_prev_sys = '0') and (v_sync_sys = '1') then
+        par_rx_byte_i  <= phy_rx_byte; -- sample data bus here
         par_rx_valid_i <= '1';
       end if;
     end if;
   end process;
 end architecture;
+
