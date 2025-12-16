@@ -22,7 +22,7 @@ architecture sim of tb_spi_slave_subsystem is
 begin
 
   ---------------------------------------------------------------------------
-  -- DUT (adjust port map if needed)
+  -- DUT
   ---------------------------------------------------------------------------
   dut : entity work.spi_slave_subsystem
     port map (
@@ -46,7 +46,7 @@ begin
   end process;
 
   ---------------------------------------------------------------------------
-  -- Stimulus + local SPI helper
+  -- Stimulus + local SPI helpers
   ---------------------------------------------------------------------------
   stim : process
 
@@ -74,6 +74,20 @@ begin
       wait for C_SCLK_PERIOD/2;
     end procedure;
 
+    -- assert/deassert CS around exactly one byte transfer
+    procedure spi_transfer_byte_cs_toggle(
+      constant tx_b : in  std_logic_vector(7 downto 0);
+      variable rx_b : out std_logic_vector(7 downto 0)
+    ) is
+    begin
+      cs_n <= '0';
+      wait for C_SCLK_PERIOD/4;           -- small setup time with CS low
+      spi_transfer_byte(tx_b, rx_b);
+      wait for C_SCLK_PERIOD/4;           -- small hold time
+      cs_n <= '1';
+      wait for C_SCLK_PERIOD/2;           -- inter-byte gap with CS high
+    end procedure;
+
     type t_byte_array is array (natural range <>) of std_logic_vector(7 downto 0);
     variable rx_bytes    : t_byte_array(0 to 3);
     variable rd_word     : std_logic_vector(31 downto 0);
@@ -94,7 +108,7 @@ begin
     wait for 5*C_SYSCLK_PERIOD;
 
     -------------------------------------------------------------------------
-    -- Test 1: WRITE 0xDEADBEEF to addr 0x12
+    -- Test 1: WRITE 0xDEADBEEF to addr 0x12 (CS held low across 5 bytes)
     -------------------------------------------------------------------------
     report "Test 1: WRITE 0xDEADBEEF to addr 0x12" severity note;
 
@@ -125,14 +139,14 @@ begin
     -- cmd: RW=1, addr=0x12 => 0x80 | 0x12 = 0x92
     spi_transfer_byte(x"92", rx_bytes(0));  -- ignore readback
 
-    -- *** PAUSE SCLK here to give parser + CDC time to queue DEADBEEF ***
+    -- pause SCLK (CS still low) to give SYS domain time to queue response
     sclk <= '0';
-    wait for 8*C_SCLK_PERIOD;  -- no SCLK edges, CS_n still low
+    wait for 8*C_SCLK_PERIOD;
 
-    -- 1st dummy byte: gives parser + FIFO time, discard MISO
-    spi_transfer_byte(x"00", rx_bytes(0));   -- MISO here is don't-care
+    -- 1 dummy byte (discard)
+    spi_transfer_byte(x"00", rx_bytes(0));
 
-    -- Now clock out 4 dummy bytes while sampling MISO
+    -- clock out 4 bytes while sampling MISO
     spi_transfer_byte(x"00", rx_bytes(0));
     spi_transfer_byte(x"00", rx_bytes(1));
     spi_transfer_byte(x"00", rx_bytes(2));
@@ -141,18 +155,67 @@ begin
     cs_n <= '1';
     sclk <= '0';
 
-    -- assemble readback word
     rd_word := rx_bytes(0) & rx_bytes(1) & rx_bytes(2) & rx_bytes(3);
 
     if rd_word /= x"DEADBEEF" then
-        error_count := error_count + 1;
-        report "Test 2 FAILED: read data mismatch" severity error;
-        report "rx_bytes(0) = " & integer'image(to_integer(unsigned(rx_bytes(0))));
-        report "rx_bytes(1) = " & integer'image(to_integer(unsigned(rx_bytes(1))));
-        report "rx_bytes(2) = " & integer'image(to_integer(unsigned(rx_bytes(2))));
-        report "rx_bytes(3) = " & integer'image(to_integer(unsigned(rx_bytes(3))));
+      error_count := error_count + 1;
+      report "Test 2 FAILED: read data mismatch (expected DEADBEEF)" severity error;
     else
-        report "Test 2 PASSED: read data OK" severity note;
+      report "Test 2 PASSED: read data OK" severity note;
+    end if;
+
+    -------------------------------------------------------------------------
+    -- Test 3: WRITE/READ 0xCAFEBABE with CS toggled per byte on WRITE
+    -- NOTE: With your current DUT, this WRITE is expected to FAIL because
+    --       the parser resets to IDLE when CS deasserts between bytes.
+    -------------------------------------------------------------------------
+    report "Test 3: WRITE 0xCAFEBABE to addr 0x13 with CS toggled per byte" severity note;
+
+    -- Write sequence with CS toggled each byte:
+    -- (cmd)(CA)(FE)(BA)(BE) each in its own CS low window
+    spi_transfer_byte_cs_toggle(x"13", rx_bytes(0)); -- cmd: RW=0 addr=0x13
+    spi_transfer_byte_cs_toggle(x"CA", rx_bytes(0));
+    spi_transfer_byte_cs_toggle(x"FE", rx_bytes(1));
+    spi_transfer_byte_cs_toggle(x"BA", rx_bytes(2));
+    spi_transfer_byte_cs_toggle(x"BE", rx_bytes(3));
+
+    wait for 5*C_SCLK_PERIOD;
+
+    -------------------------------------------------------------------------
+    -- Read back addr 0x13 (normal CS-held transaction like Test 2)
+    -------------------------------------------------------------------------
+    report "Test 3: READ back from addr 0x13" severity note;
+
+    cs_n <= '0';
+    wait for C_SCLK_PERIOD;
+
+    -- cmd: RW=1 addr=0x13 => 0x80 | 0x13 = 0x93
+    spi_transfer_byte(x"93", rx_bytes(0));
+
+    sclk <= '0';
+    wait for 8*C_SCLK_PERIOD;
+    cs_n <= '1';
+    wait for 8*C_SCLK_PERIOD;
+    cs_n <= '0';
+    wait for 8*C_SCLK_PERIOD;
+
+    spi_transfer_byte(x"00", rx_bytes(0)); -- dummy/discard
+
+    spi_transfer_byte(x"00", rx_bytes(0));
+    spi_transfer_byte(x"00", rx_bytes(1));
+    spi_transfer_byte(x"00", rx_bytes(2));
+    spi_transfer_byte(x"00", rx_bytes(3));
+
+    cs_n <= '1';
+    sclk <= '0';
+
+    rd_word := rx_bytes(0) & rx_bytes(1) & rx_bytes(2) & rx_bytes(3);
+
+    if rd_word /= x"CAFEBABE" then
+      error_count := error_count + 1;
+      report "Test 3 FAILED: read data mismatch (expected CAFEBABE)" severity error;
+    else
+      report "Test 3 PASSED: read data OK" severity note;
     end if;
 
     -------------------------------------------------------------------------

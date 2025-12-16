@@ -1,0 +1,19 @@
+# --------------------------------------------------------------
+# System clock (on-board 12 MHz oscillator)
+# --------------------------------------------------------------
+set_io sys_clk 21
+
+# Manual reset
+set_io sys_rst_n 87
+
+# --------------------------------------------------------------
+# SPI pins on J2 Pmod connector (left row)
+# J2-1 = PIO1_02 = FPGA pin 78
+# J2-2 = PIO1_03 = FPGA pin 79
+# J2-3 = PIO1_04 = FPGA pin 80
+# J2-4 = PIO1_05 = FPGA pin 81
+# --------------------------------------------------------------
+set_io sclk 78   # J2-1
+set_io cs_n 79   # J2-2
+set_io mosi 80   # J2-3
+set_io miso 81   # J2-4

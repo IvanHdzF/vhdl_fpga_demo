@@ -21,22 +21,28 @@ architecture rtl of reg_bank is
   constant C_NUM_REGS : integer := 2**G_ADDR_WIDTH;
 
   type t_reg_array is array (0 to C_NUM_REGS-1) of std_logic_vector(G_DATA_WIDTH-1 downto 0);
-  signal regs : t_reg_array := (others => (others => '0'));
-
+  signal regs      : t_reg_array;  -- will map to BRAM
+  signal rdata_reg : std_logic_vector(G_DATA_WIDTH-1 downto 0);
 begin
-  process(clk, rst_n)
+
+  process(clk)
   begin
-    if rst_n = '0' then
-      regs <= (others => (others => '0'));
-    elsif rising_edge(clk) then
-      if wr_en = '1' then
-        regs(to_integer(addr)) <= wdata;
+    if rising_edge(clk) then
+      if rst_n = '0' then
+        -- optional: clear output only; do NOT touch regs
+        rdata_reg <= (others => '0');
+      else
+        -- write port
+        if wr_en = '1' then
+          regs(to_integer(addr)) <= wdata;
+        end if;
+
+        -- synchronous read
+        rdata_reg <= regs(to_integer(addr));
       end if;
     end if;
   end process;
 
-  -- simple async read
-  rdata <= regs(to_integer(addr)) when rst_n = '1'
-           else (others => '0');
+  rdata <= rdata_reg;
 
 end architecture;
